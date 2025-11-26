@@ -1,153 +1,141 @@
 /******************************
- * Quantumult X - YouTube 简易翻译脚本示例
- * 功能：
- * 1. 翻译 YouTube Web 部分常见 UI 文本到中文；
- * 2. 对部分标题/简介做简单“字典式翻译”示例；
+ * Quantumult X - YouTube 字幕自动翻译脚本
  *
- * 说明：
- * - 这是一个示范脚本，重点是教你怎么写/怎么用；
- * - 想要“全量机器翻译”，需要接外部翻译 API，会比较复杂；
+ * 功能：
+ *  - 拦截 https://www.youtube.com/api/timedtext 字幕接口
+ *  - 调用 Google Translate 免费接口，将字幕翻译为目标语言
+ *
+ * 使用提示：
+ *  - 默认翻译成简体中文（zh-CN），可以自行改成其他语言代码
+ *  - 仅在字幕不是中文时才尝试翻译
  *******************************/
 
-const isQuantumultX = typeof $task !== "undefined";
+const isQX = typeof $task !== "undefined";
+const url = $request.url || "";
+let body = $response.body || "";
 
-function done(body) {
-  if (isQuantumultX) {
-    $done({ body });
-  } else {
-    $done({ body });
-  }
+// ===== 你可以在这里改目标语言 =====
+const TARGET_LANG = "zh-CN"; // 想要英文就写 "en"、繁体 "zh-TW"、日文 "ja" 等
+// ==================================
+
+// 如果本身就是中文字幕，直接放行（简单判断）
+if (/lang=zh/i.test(url) || /tlang=zh/i.test(url)) {
+  $done({ body });
 }
 
-let body = $response.body;
-
-// 非文本直接放行
-if (!body || typeof body !== "string") {
-  done(body);
+// 非 XML/空响应直接放行
+if (!body || typeof body !== "string" || body.indexOf("<text") === -1) {
+  $done({ body });
 }
 
-/**
- * 一、通用 UI 文本翻译（适配 HTML / JSON 中的字符串）
- * 这里尽量只替换独立词/短语，避免误伤。
- */
-const uiMap = {
-  "Home": "主页",
-  "Shorts": "短视频",
-  "Subscriptions": "订阅",
-  "Library": "媒体库",
-  "Explore": "探索",
-  "Trending": "热门",
-  "History": "历史记录",
-  "Watch later": "稍后观看",
-  "Liked videos": "赞过的视频",
-  "Share": "分享",
-  "Download": "下载",
-  "Comments": "评论",
-  "Show more": "展开更多",
-  "Show less": "收起",
-  "Autoplay": "自动播放",
-  "Settings": "设置",
-  "Report": "举报",
-  "Subscribers": "位订阅者",
-  "views": "次观看",
-  "View all": "查看全部",
-  "LIVE": "直播中",
-  "Top chat": "热聊",
-  "Live chat": "直播聊天",
-  "Skip ads": "跳过广告",
-  "Ad": "广告"
-};
-
-/**
- * 为了减少误替换，这里做一个比较保守的替换函数：
- * - 尝试匹配引号包裹的字符串（HTML/JSON 中常见情况）
- */
-function smartReplace(str, dict) {
-  for (const [en, zh] of Object.entries(dict)) {
-    // 1. JSON / HTML 属性中的 "xxx" 或 'xxx'
-    const patternQuoted = new RegExp(`(["'])${en}(["'])`, "g");
-    str = str.replace(patternQuoted, `$1${zh}$2`);
-
-    // 2. 部分页面纯文本（用非字母边界简单兜底，避免连在句子中全替）
-    const patternWord = new RegExp(`([^A-Za-z])${en}([^A-Za-z])`, "g");
-    str = str.replace(patternWord, `$1${zh}$2`);
-  }
-  return str;
+// XML 实体解码
+function decodeXml(str) {
+  return str
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
 }
 
-/**
- * 二、标题/简介的简单翻译示例
- * 思路：
- * - 找到 "title": "xxxx" / "descriptionSnippet" 之类字段，
- * - 通过一个小词典做替换（你可以自己扩展）。
- */
-const simpleDict = {
-  "tutorial": "教程",
-  "beginner": "新手",
-  "ultimate": "终极",
-  "guide": "指南",
-  "review": "评测",
-  "unboxing": "开箱",
-  "best": "最佳",
-  "top": "热门",
-  "tips": "技巧",
-  "tricks": "技巧",
-  "how to": "如何",
-  "setup": "设置",
-  "config": "配置",
-  "proxy": "代理",
-  "vpn": "VPN"
-};
-
-function translateByDict(str, dict) {
-  let s = str;
-  for (const [en, zh] of Object.entries(dict)) {
-    const reg = new RegExp(en, "ig");
-    s = s.replace(reg, (m) => {
-      // 保留大小写形式很复杂，这里直接替换为中文
-      return zh;
-    });
-  }
-  return s;
+// XML 实体编码
+function encodeXml(str) {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
-function translateTitleAndDesc(str) {
-  // 处理 "title": "xxx"
-  str = str.replace(
-    /("title"\s*:\s*")([^"]+)(")/g,
-    (match, p1, p2, p3) => {
-      const newText = translateByDict(p2, simpleDict);
-      return `${p1}${newText}${p3}`;
+// 调用 Google Translate 免费接口翻译
+function translateOne(text) {
+  const q = encodeURIComponent(text);
+  const api =
+    `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${TARGET_LANG}&dt=t&q=${q}`;
+
+  const req = { url: api, headers: { "User-Agent": "Mozilla/5.0" } };
+
+  return $task.fetch(req).then(
+    (resp) => {
+      try {
+        const data = JSON.parse(resp.body);
+        // data[0] 是分段数组，每项 [翻译后, 原文, ...]
+        let result = "";
+        data[0].forEach((seg) => {
+          result += seg[0];
+        });
+        return result || text; // 失败就返回原文
+      } catch (e) {
+        console.log("Translate parse error:", e);
+        return text;
+      }
+    },
+    (err) => {
+      console.log("Translate request error:", err);
+      return text;
     }
   );
+}
 
-  // 处理 "description": "xxx"
-  str = str.replace(
-    /("description"\s*:\s*")([^"]+)(")/g,
-    (match, p1, p2, p3) => {
-      const newText = translateByDict(p2, simpleDict);
-      return `${p1}${newText}${p3}`;
+// 主逻辑：抽取 <text> 标签内容 -> 翻译 -> 写回 XML
+!(async () => {
+  try {
+    const regex = /<text([^>]*)>([\s\S]*?)<\/text>/g;
+    let match;
+    const segments = [];
+
+    while ((match = regex.exec(body)) !== null) {
+      const full = match[0];
+      const attrs = match[1] || "";
+      const contentRaw = match[2] || "";
+      const content = decodeXml(contentRaw);
+
+      segments.push({
+        full,
+        attrs,
+        text: content,
+      });
     }
-  );
 
-  return str;
-}
+    if (segments.length === 0) {
+      $done({ body });
+      return;
+    }
 
-/**
- * 三、按顺序进行处理
- */
-try {
-  let newBody = body;
+    const translatedList = [];
 
-  // 1. UI 文字翻译
-  newBody = smartReplace(newBody, uiMap);
+    // 逐行翻译（简单直观，但如果视频非常长，可能稍微慢一点）
+    for (let i = 0; i < segments.length; i++) {
+      const t = segments[i].text.trim();
+      if (!t) {
+        translatedList[i] = segments[i].text;
+        continue;
+      }
 
-  // 2. 标题/简介简单翻译示例
-  newBody = translateTitleAndDesc(newBody);
+      // 如果本行已经大概率是中文，就不翻
+      if (/[\u4e00-\u9fa5]/.test(t)) {
+        translatedList[i] = segments[i].text;
+        continue;
+      }
 
-  done(newBody);
-} catch (e) {
-  // 出问题就原样返回，避免页面挂掉
-  console.log("YouTube Translate Script Error: " + e);
-  done(body);
-}
+      const trans = await translateOne(t);
+      translatedList[i] = trans;
+    }
+
+    let newBody = body;
+
+    // 按顺序替换回 XML
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      const newTextEncoded = encodeXml(translatedList[i]);
+      const replacement = `<text${seg.attrs}>${newTextEncoded}</text>`;
+      newBody = newBody.replace(seg.full, replacement);
+    }
+
+    $done({ body: newBody });
+  } catch (e) {
+    console.log("YouTube Subtitle Translate Error:", e);
+    $done({ body });
+  }
+})();
