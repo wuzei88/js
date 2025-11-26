@@ -1,0 +1,35 @@
+// Quantumult X YouTube Dual Subs Snippet
+// 适用于YouTube自动翻译字幕（简体中文）
+
+var body = $response.body;
+var url = $request.url;
+
+if (url.indexOf("youtube.com/watch") !== -1) {
+    try {
+        // 查找字幕信息
+        var regex = /"captions":\s*({.*?})/g;
+        var match = regex.exec(body);
+        if (match && match[1]) {
+            var captions = JSON.parse(match[1]);
+
+            if (captions && captions.playerCaptionsTracklist) {
+                var tracks = captions.playerCaptionsTracklist;
+
+                // 强制简体中文字幕
+                for (var i = 0; i < tracks.length; i++) {
+                    if (tracks[i].languageCode === 'zh-Hans') {
+                        tracks[i].default = true;  // 将简体中文设置为默认
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 返回修改后的响应体
+        $response.body = JSON.stringify(body);
+    } catch (e) {
+        $notify("错误", "字幕加载失败", "请检查是否启用正确的字幕源");
+    }
+}
+
+$done({ body });
