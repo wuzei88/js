@@ -1,0 +1,78 @@
+## Egern 配置 — 基于 Clnc-baidu.conf 修改
+
+# 1. SOCKS5 / HTTP(S) 入站 (inbound)
+[Inbounds]
+  # socks5 入口
+  [[inbound]]
+  protocol = "socks"
+  listen = "0.0.0.0"
+  port = 1081
+  # 如果需要 DNS 转发
+  udp = true
+  # (其他 socks 选项)
+
+  # HTTP 入口 (可选)
+  [[inbound]]
+  protocol = "http"   # 或者 "http"
+  listen = "0.0.0.0"
+  port = 8080         # 自定一个端口
+
+# 2. 出站 (outbound) — 走 “服务器 IP + 端口 + 加密 / header” 的远程代理
+[Outbounds]
+  [[outbound]]
+  name = "remote_http"
+  protocol = "http"     # 或者 "custom" / "tunnel" 看 Egern 是否支持
+  server = "153.3.236.22"
+  port = 443
+  # custom header
+  headers = { "Host" = "153.3.236.22:443", "X-T5-Auth" = "683556433" }
+  # 如果需要加密 /认证，根据 Egern 支持情况配置
+
+  [[outbound]]
+  name = "remote_https"
+  protocol = "https"    # 或者 tls + http_over_tls/tunnel
+  server = "153.3.236.22"
+  port = 443
+  tls = true
+  headers = { "Host" = "153.3.236.22:443", "X-T5-Auth" = "683556433" }
+  # 其他 TLS / tunnel 设置视 Egern 支持情况而定
+
+# 3. DNS 设置 (if Egern 支持自定义 DNS)
+[DNS]
+  enable = true
+  listen = "0.0.0.0:6653"
+  # upstream / fallback DNS 设为 119.29.29.29 或其他
+  upstream = ["119.29.29.29", "119.29.29.29:53"]
+  # 可选：cache = false / cacheSize = 0
+
+# 4. Routing / Rules / ACL
+[Routing]
+  # 比如所有流量默认通过 proxy，除非在 local 列表里
+  # 这里根据 Egern 支持语法写
+
+  # 示例假设 “outboundTag = remote_http/remote_https”
+  [[routing.rule]]
+    type = "http"
+    outbound = "remote_http"
+
+  [[routing.rule]]
+    type = "tls"   # HTTPS / CONNECT
+    outbound = "remote_https"
+
+  # 也可以设定 DNS 请求走 DNS 出站 (if Egern 支持)
+
+# 5. TUN / Tunnel / VPN 模式 (if Egern 支持)
+[TUN]
+  enabled = true
+  address4 = "10.0.0.1"
+  address6 = "fc00::1"
+  mtu = 1500
+  device = "tun0"   # 或 Egern 支持的 tun 设备名
+
+# 6. UDP 转发 (outbound) — 如果需要支持 UDP
+[Outbounds.udp]
+  name = "udp_tunnel"
+  protocol = "udp"   # or "socks" or "udp_tunnel" 视 Egern 支持
+  server = "153.3.236.22"
+  port = 443
+  # 如果 Egern 支持 header/tunnel 模式 + 加密，则配置相应字段
