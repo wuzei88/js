@@ -1,183 +1,138 @@
-############################################################
-# Clnc-baidu 模块（Loon 内核 / Egern-Loon 可用）
-# 功能：百度伪装通道（Socks5/HTTP 入站、HTTP/TLS 伪装出站、UDP 转发、DNS、TUN）
-# 说明：完美复刻 Clnc-baidu.conf 的主要行为与伪装特征
-# 作者：为你转换（务必在导入后检查端口冲突 / 权限）
-############################################################
+# ========== Egern (Loon 内核) 模块：Clnc-baidu 完整复刻 ==========
+# 说明：将此文本放入 Egern 的 modules 中作为一个 Loon 内核模块。
+#       如果 Egern 要求单独的文件，也可以保存为 clnc-baidu.conf 并导入。
 
 [General]
-# 基本运行模式
-ip-mode = v4-only
-allow-udp-proxy = true
-log-level = notify
-# 若 Egern 要求可改为 true/false
-allow-external-connections = false
+# 基本运行参数
+loglevel = "info"          # 可改为 debug 查看详细日志
+ip-mode = v4              # v4-only / v6-only / v4v6 视设备选择
 
-############################################################
-# 入站（本地代理接口） — 本模块会暴露 socks5 + http 本地端口
-############################################################
-# SOCKS5 本地入口（供设备代理）
-[socks5]
-enable = true
-listen = 0.0.0.0
-port = 1081
-udp = true          # 支持 UDP 透传给远端
-auth = false        # 若需用户名密码则填 true 并配置 username/password
-
-# HTTP（可选）本地入口（供浏览器 / 某些 app 使用）
-[http]
-enable = true
-listen = 0.0.0.0
-port = 8080
-allow_insecure = true
-
-############################################################
-# 出站（远端伪装隧道） — 伪装成百度系服务
-# 这里复刻原脚本的远端目标与 header 特征。若要改 IP 或 key，请修改下面 server/port/auth。
-############################################################
+# ========== 入站（本地代理）==========
+# 本地 SOCKS5（供浏览器/应用绑定）
 [Proxy]
-# 主伪装出站（HTTP over TLS 伪装）
-# 对应原脚本的 153.3.236.22:443 + X-T5-Auth:683556433 header
-[[proxy]]
-name = "baidu_tunnel_tls"
-type = http
+# socks5 本地监听（等同于 inbound）
+socks_listen = 0.0.0.0
+socks_port = 1081
+socks_udp = true          # 支持 UDP over socks
+
+# HTTP 本地监听（供系统代理或http代理软件使用）
+http_listen = 0.0.0.0
+http_port = 8080
+
+# ========== DNS（本地解析）==========
+[DNS]
+# 本地 DNS 监听（避免 DNS 泄露）
+dns_listen = :::6653
+# 推荐上游（示例：119.29.29.29），可按需替换
+dns_upstreams = 119.29.29.29:53,223.5.5.5:53
+dns_cache = true
+dns_cache_size = 128
+
+# ========== TUN / 虚拟网卡 ==========
+[TUN]
+enable = true
+tun_device = tun0
+# IPv4/IPv6 网段（与原 conf 保持一致）
+tun_addr4 = 10.0.0.1/24
+tun_addr6 = fc00::1/64
+tun_mtu = 1500
+# 启用后会把设备全部流量通过代理（VPN 模式）
+route_all = true
+
+# ========== 出站（远端伪装通道）==========
+# 这里定义两个等效出站：一个 HTTP over TLS（伪装），一个备用 plain HTTPS
+[Outbound]
+# 主通道：伪装 HTTP/TLS（伪装成百度流量）
+[[outbound]]
+name = "baidu_tunnel"
+type = http        # 若 Egern 要求为 custom/tunnel，请修改为对应值
 server = 153.3.236.22
 port = 443
 tls = true
-skip-cert-verify = true
-# 伪装请求头（保持百度特征）
-headers = {
-  "Host" = "153.3.236.22:443",
-  "User-Agent" = "BaiduTranslate/8.16.0.10 (Linux; U; Android 11)",
-  "X-T5-Auth" = "683556433",
-  "Accept" = "*/*",
-  "Connection" = "Keep-Alive"
-}
-# 如果你的内核支持 path / sni / websocket 等伪装，可在此补充
+# 关键伪装 header（完全还原脚本内的 header 字段）
+header.Host = "153.3.236.22:443"
+header["X-T5-Auth"] = "683556433"
+header["User-Agent"] = "Mozilla/5.0 (Linux; Android) BaiduApp/12.0.0"
+# 若内核支持 path/payload/first-packet-payload 等伪装字段，可另行添加
 
-# 备用（HTTP plain / CONNECT）— 防止 TLS 不可用时回落
-[[proxy]]
-name = "baidu_tunnel_http"
-type = http
+# 备用通道（plain https/connect）
+[[outbound]]
+name = "baidu_https"
+type = https
 server = 153.3.236.22
 port = 443
-tls = false
-headers = {
-  "Host" = "153.3.236.22:443",
-  "X-T5-Auth" = "683556433",
-  "User-Agent" = "BaiduTranslate/8.16.0.10 (Linux; U; Android 11)"
-}
+tls = true
+header.Host = "153.3.236.22:443"
+header["X-T5-Auth"] = "683556433"
 
-# UDP 转发专用出站（若内核要求单独 UDP）
-[[proxy]]
-name = "baidu_udp_relay"
-type = socks5
+# UDP 出站（把 UDP 转到远端，供游戏/语音使用）
+[[outbound]]
+name = "baidu_udp"
+type = socks
 server = 153.3.236.22
 port = 443
-udp = true
-# socks5 上允许 UDP 转发（用于游戏 / DNS over UDP 转发）
+socks_version = 5
+# 如果 Egern 支持 udp relay/tunnel，请替换类型为 udp_tunnel 并添加对应字段
 
-############################################################
-# DNS — 本地 DNS 监听并上游到常用解析（减少真实域名泄露）
-############################################################
-[DNS]
-enable = true
-listen = ::1:6653   # 同时支持 IPv4 / IPv6 本地监听（Egern 可识别 :: 表示双栈）
-# 若 Egern 报错改为 0.0.0.0:6653 或 127.0.0.1:6653
-nameserver = 119.29.29.29:53
-fallback = 1.1.1.1:53
-cache = true
-cache-size = 1024
-# 将常见百度域名走本地解析以避免泄露
-hosts = {
-  "baidu.com" = 180.97.33.108,
-  "baidubce.com" = 180.76.76.76
-}
+# ========== 本地转发 / 管道逻辑 ==========
+# 将不同流量按类型分流至不同 outbound
+[Routing]
+# 默认走 baidu_tunnel（TCP/HTTP/TLS）
+default = "baidu_tunnel"
 
-############################################################
-# TUN（虚拟网卡 / 全局代理） — 将设备流量导入隧道（类似 VPN）
-# 注意：部分 iOS/Android 需要额外权限；在路由器上请确保内核支持 TUN
-############################################################
-[TUN]
-enable = true
-device = tun0
-address4 = 10.0.0.1/24
-address6 = fc00::1/64
-mtu = 1500
-dns = 10.0.0.1
-route_all = true      # 是否将所有流量强制走 TUN（true 表示像 VPN 一样拦截全部流量）
-auto_route = true
-# tun 模式下如何转发 TCP/UDP（映射到上面的 proxy）
-tun_tcp = "baidu_tunnel_tls"
-tun_udp = "baidu_udp_relay"
+# 规则示例（可按需扩展）
+[[rule]]
+# HTTP 请求（含 HOST 伪装）走 baidu_tunnel
+type = "http"
+outbound = "baidu_tunnel"
 
-############################################################
-# UDP 设置（游戏/实时）
-############################################################
+[[rule]]
+# UDP 流量走 baidu_udp（游戏/语音）
+type = "udp"
+outbound = "baidu_udp"
+
+[[rule]]
+# DNS 查询走本地 DNS（不走远端）
+type = "domain"
+domain = "localhost,127.0.0.1"
+outbound = "direct"
+
+# ========== 应用特征 & 管道细节 ==========
+# 伪装首包 / 初始 payload（若内核支持）
+# 例如：in_payload_http / in_payload_tls 在某些内核为特殊字段，这里以注释提示
+[Payload]
+# in_payload_http = "<GET / HTTP/1.1\r\nHost: 153.3.236.22:443\r\n...>"
+# in_payload_tls  = "<ClientHello with baidu SNI>"
+
+# ========== UDP / SOCKS5 UDP 支持 ==========
 [UDP]
 enable = true
-mode = relay            # relay 表示透传给指定 UDP 出站
-relay_target = "baidu_udp_relay"
-timeout = 30            # UDP 空闲超时（秒）
-dns_udp = true          # DNS over UDP 走 UDP 转发
+# socks5 UDP 代发（local -> socks -> remote）
+socks5_udp_support = true
+socks5_udp_timeout = 60   # 秒
+# 如果内核支持 udp_fragment / mtu_adjust 等字段，可在此添加
 
-############################################################
-# Routing / Rules — 按类型区分选择伪装管道
-# 核心思想：HTTP(s) 流量走 TLS 伪装（baidu_tunnel_tls），普通 TCP 回落到 http，UDP 走 udp_relay
-############################################################
-[Routing]
-default = "baidu_tunnel_tls"
-# domain/host 白名单，可绕过伪装走直连（例如你的内网资源）
-bypass-domains = [
-  "localhost",
-  "127.0.0.1",
-  "10.0.0.0/8",
-  "192.168.0.0/16"
-]
-# 规则：按协议分发
-[[rule]]
-type = "domain-suffix"
-value = "baidu.com"
-outbound = "baidu_tunnel_tls"
-
-[[rule]]
-type = "protocol"
-value = "udp"
-outbound = "baidu_udp_relay"
-
-[[rule]]
-type = "protocol"
-value = "tcp"
-outbound = "baidu_tunnel_tls"
-
-# 特殊应用/端口（例如游戏常用端口）优先 UDP
-[[rule]]
-type = "port"
-value = "3074,27015,3478-3480"
-outbound = "baidu_udp_relay"
-
-############################################################
-# Hooks / Script（可选） — 简单脚本实现 header 修饰 / 伪装加固
-# Loon 支持 Lua/JS 脚本 (以 .lpx/Script 模块形式)。下面是内置小脚本示例（若 Egern 不支持可忽略）。
-############################################################
+# ========== 额外脚本 / 连接前置处理（如果 Egern 支持脚本） ==========
 [Script]
-enable = true
-# 简单伪装请求头注入器（伪代码：Loon/Surge 版会以 hook-request 实现）
-# 请在 Egern Script 区用对应语言实现（这里写明逻辑供参考）
-#
-# hook-request ^https?:\/\/.* {
-#   set header "User-Agent" "BaiduTranslate/8.16.0.10 (Linux; U; Android 11)"
-#   set header "X-T5-Auth" "683556433"
-#   set header "Connection" "Keep-Alive"
-# }
-#
-# 若你的 Egern 支持直接写 Surge / Loon 风格脚本，请把上面三行放入 Script 区
+# 在 outbound 建立前注入 header 或做首次握手（伪装）
+# 这里只写伪代码样例，Egern 如果支持 JavaScript/Lua Hook，请在对应位置写逻辑
+# 示例 (伪)：
+# function on_connect(ctx)
+#   if ctx.outbound == "baidu_tunnel" then
+#       ctx.set_header("X-T5-Auth","683556433")
+#       ctx.set_header("Host","153.3.236.22:443")
+#   end
+# end
 
-############################################################
-# Notes / Tips
-# 1) 若 Egern 报错 “listen 地址被占用”，把 socks/http 的 listen 改成 127.0.0.1 或修改端口。
-# 2) 若需要用户名密码验证，请在 socks5 段开启 auth 并设置 username/password。
-# 3) 若要增加更多远端节点（备用），按 [[proxy]] 段复制并添加相应伪装 headers。
-# 4) 若你的 Egern 版本不支持某些键（如 tun.route_all），请去掉或参考 Egern 文档替换为对应键名。
-# 5) 导入后建议查看日志 (log-level) 来确认出站是否成功建立 TLS 隧道与 UDP 转发。
-############################################################
+# ========== 规则白名单/直连（示例）=========
+[Direct]
+# 本地内网 / 常见直连域名，避免走代理造成破坏
+local_ips = 10.0.0.0/8, 192.168.0.0/16, 127.0.0.0/8
+bypass_domains = "baidu.com, bdstatic.com, static.cdn"
+
+# ========== 说明与替换项 ==========
+# 1) 请务必检查并替换 `153.3.236.22` / `683556433` 等为你实际要用的服务端与 token（若你就是用原脚本内的就保留）。
+# 2) 若 Egern 报错某些字段（如 `type = http` 不支持 header 字段），把字段名调整为 Egern 支持的伪装写法（我可以按错误信息直接帮你改）。
+# 3) 如果你要把该模块与其它模块合并，请确保 inbound 端口（1081/8080/6653）不冲突。
+# 4) 想要 strict 一点把 default 改为 direct，并用 rule 明确列出哪些流量走代理（更安全）。
+# ======================================================================
