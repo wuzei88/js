@@ -1,3 +1,5 @@
+console.log("JKBD SCRIPT HIT");
+
 if ($response && $response.body) {
   try {
     let obj = JSON.parse($response.body);
