@@ -1,0 +1,37 @@
+// ==UserScript==
+// @name         dytt8.app 开屏公告弹窗去除
+// @match        *://*.dytt8.app/*
+// @run-at       document-start
+// ==/UserScript==
+
+(function() {
+    'use strict';
+    // 隐藏常见弹窗 class/id
+    const selectors = [
+        'div[class*="modal"]', 'div[class*="popup"]', 'div[class*="announce"]', 
+        'div[class*="notice"]', 'div[class*="alert"]', 'div[class*="gg"]', 
+        'div[style*="position: fixed"]', '.overlay', '.dialog', 
+        '[aria-label*="公告"]', 'button:contains("确认")' // 针对红色确认按钮的上层
+    ];
+
+    function hidePopups() {
+        selectors.forEach(sel => {
+            document.querySelectorAll(sel).forEach(el => {
+                if (el.innerHTML.includes('电影天堂公告') || 
+                    el.innerHTML.includes('永久免费') || 
+                    el.innerHTML.includes('dytt8.app')) {
+                    el.style.display = 'none !important';
+                    el.remove(); // 更彻底移除
+                }
+            });
+        });
+    }
+
+    // MutationObserver 监听动态插入
+    const observer = new MutationObserver(hidePopups);
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    // 立即执行 + 定时
+    hidePopups();
+    setInterval(hidePopups, 500);
+})();
