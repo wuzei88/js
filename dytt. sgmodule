@@ -3,7 +3,6 @@
 // @match        *://*.dytt8.app/*
 // @run-at       document-start
 // ==/UserScript==
-
 (function() {
     'use strict';
     // 隐藏常见弹窗 class/id
